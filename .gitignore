@@ -1,0 +1,10 @@
+SAME51RGBVideo.X/build
+SAME51RGBVideo.X/dist
+SAME51RGBVideo.X/disassembly/
+SAME51RGBVideo.X/.generated_files
+SAME51RGBVideo.X/nbproject/Makefile-*
+SAME51RGBVideo.X/nbproject/Package-*
+SAME51RGBVideo.X/nbproject/private
+SAME51RGBVideo.X/debug
+SAME51RGBVideo.X/queuelogs
+

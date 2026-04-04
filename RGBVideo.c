@@ -7,20 +7,51 @@
 #include <stdbool.h>
 
 
-volatile uint32_t Milliseconds = 0L;
+volatile uint32_t FieldCounter = 0UL;
 volatile bool Tick = false;
 
 
+/* TC3_Handler --- ISR for 50Hz frame timer interrupt */
+
 void TC3_Handler(void)
 {
+    int line;
+    int i;
+    
     // Acknowledge interrupt
     TC3_REGS->COUNT16.TC_INTFLAG |= TC_INTFLAG_MC0(1);
     
-    Milliseconds++;
+    FieldCounter++;
     Tick = true;
     
-    //PORT_REGS->GROUP[1].PORT_OUTTGL = PORT_PB06;    // 500Hz on PB06
-    //PORT_REGS->GROUP[0].PORT_OUTTGL = PORT_PA12;    // 500Hz on PA12
+    PORT_REGS->GROUP[0].PORT_OUTSET = PORT_PA00;    // Frame sync HIGH
+    
+    for (line = 0; line < 290; line++)
+    {
+        PORT_REGS->GROUP[0].PORT_OUTCLR = PORT_PA01;    // Line sync LOW
+        
+        for (i = 0; i < 23; i++)
+        {
+            __asm("nop");
+            __asm("nop");
+            __asm("nop");
+            __asm("nop");
+        }
+        
+        PORT_REGS->GROUP[0].PORT_OUTSET = PORT_PA01;    // Line sync HIGH
+        
+        for (i = 0; i < 293; i++)
+        {
+            __asm("nop");
+            __asm("nop");
+            __asm("nop");
+            __asm("nop");
+        }
+        
+        __asm("nop");
+    }
+    
+    PORT_REGS->GROUP[0].PORT_OUTCLR = PORT_PA00;    // Frame sync LOW
 }
 
 
@@ -48,11 +79,11 @@ void _mon_putc(const char ch)
 }
 
 
-/* millis --- return milliseconds since reset */
+/* fieldCounter --- return field count since reset */
 
-uint32_t millis(void)
+uint32_t fieldCounter(void)
 {
-    return (Milliseconds);
+    return (FieldCounter);
 }
 
 
@@ -237,9 +268,9 @@ static void initUARTs(void)
 }
 
 
-/* initMillisecondTimer --- set up a timer to interrupt every millisecond */
+/* init50HzTimer --- set up a timer to interrupt every field */
 
-static void initMillisecondTimer(void)
+static void init50HzTimer(void)
 {
     // Connect GCLK1 to TC3
     GCLK_REGS->GCLK_PCHCTRL[26] = GCLK_PCHCTRL_GEN(0x1U) | GCLK_PCHCTRL_CHEN_Msk;
@@ -250,11 +281,11 @@ static void initMillisecondTimer(void)
     // Main Clock setup to supply clock to TC3
     MCLK_REGS->MCLK_APBBMASK |= MCLK_APBBMASK_TC3(1);
     
-    // Set up TC3 for regular 1ms interrupt
+    // Set up TC3 for regular 20ms/50Hz interrupt
     TC3_REGS->COUNT16.TC_CTRLA = TC_CTRLA_MODE_COUNT16 | TC_CTRLA_PRESCALER_DIV64;
     TC3_REGS->COUNT16.TC_COUNT = 0;
     TC3_REGS->COUNT16.TC_WAVE = TC_WAVE_WAVEGEN_MFRQ;
-    TC3_REGS->COUNT16.TC_CC[0] = ((48000000 / 64) / 1000) - 1;
+    TC3_REGS->COUNT16.TC_CC[0] = ((48000000 / 64) / 50) - 1;
     TC3_REGS->COUNT16.TC_INTENSET = TC_INTENSET_MC0(1);
     
     /* Set TC3 Interrupt Priority to Level 3 */
@@ -358,69 +389,17 @@ static void initMCU(void)
 }
 
 
-/* oneLedOn --- light one LED and set the DAC output register */
-
-void oneLedOn(const int led)
-{
-    PORT_REGS->GROUP[0].PORT_OUTCLR = PORT_PA00;
-    PORT_REGS->GROUP[1].PORT_OUTCLR = PORT_PB31;
-    PORT_REGS->GROUP[1].PORT_OUTCLR = PORT_PB30;
-    PORT_REGS->GROUP[0].PORT_OUTCLR = PORT_PA27;
-    PORT_REGS->GROUP[1].PORT_OUTCLR = PORT_PB23;
-    PORT_REGS->GROUP[0].PORT_OUTCLR = PORT_PA25;
-    PORT_REGS->GROUP[0].PORT_OUTCLR = PORT_PA20;
-    PORT_REGS->GROUP[0].PORT_OUTCLR = PORT_PA18;
-    PORT_REGS->GROUP[0].PORT_OUTCLR = PORT_PA15;
-    
-    DAC_REGS->DAC_DATA[0] = led * 511;
-    
-    switch (led)
-    {
-        case 0:
-            PORT_REGS->GROUP[0].PORT_OUTSET = PORT_PA00;
-            break;
-        case 1:
-            PORT_REGS->GROUP[1].PORT_OUTSET = PORT_PB31;
-            break;
-        case 2:
-            PORT_REGS->GROUP[1].PORT_OUTSET = PORT_PB30;
-            break;
-        case 3:
-            PORT_REGS->GROUP[0].PORT_OUTSET = PORT_PA27;
-            break;
-        case 4:
-            PORT_REGS->GROUP[1].PORT_OUTSET = PORT_PB23;
-            break;
-        case 5:
-            PORT_REGS->GROUP[0].PORT_OUTSET = PORT_PA25;
-            break;
-        case 6:
-            PORT_REGS->GROUP[0].PORT_OUTSET = PORT_PA20;
-            break;
-        case 7:
-            PORT_REGS->GROUP[0].PORT_OUTSET = PORT_PA18;
-            break;
-        case 8:
-            PORT_REGS->GROUP[0].PORT_OUTSET = PORT_PA15;
-            break;
-    }
-}
-
-
 void main(void)
 {
-    uint32_t t;
-    int i;
-    uint16_t ana;
-    
     initMCU();
     initUARTs();
-    initADC();
-    initDAC();
-    initMillisecondTimer();
+    //initADC();
+    //initDAC();
+    init50HzTimer();
     
-    PORT_REGS->GROUP[0].PORT_DIRSET = PORT_PA00;    // LED pins to outputs
-    PORT_REGS->GROUP[1].PORT_DIRSET = PORT_PB30;
+    PORT_REGS->GROUP[0].PORT_DIRSET = PORT_PA00;    // GPIO pins to outputs
+    PORT_REGS->GROUP[0].PORT_DIRSET = PORT_PA01;
+    
     PORT_REGS->GROUP[1].PORT_DIRSET = PORT_PB31;
     PORT_REGS->GROUP[0].PORT_DIRSET = PORT_PA27;
     PORT_REGS->GROUP[1].PORT_DIRSET = PORT_PB23;
@@ -429,34 +408,15 @@ void main(void)
     PORT_REGS->GROUP[0].PORT_DIRSET = PORT_PA18;
     PORT_REGS->GROUP[0].PORT_DIRSET = PORT_PA15;
     
-    printf("\nHello from the SAM%c%d%c%d%c\n", 'E', 51, 'J', 20, 'A');
+    PORT_REGS->GROUP[0].PORT_OUTSET = PORT_PA00;    // Frame sync HIGH
+    PORT_REGS->GROUP[0].PORT_OUTSET = PORT_PA01;    // Line sync HIGH
     
     while (1)
     {
-        for (i = 0; i < 8; i++)
+        if (Tick)
         {
-            oneLedOn(i);
-            t1ou('A');
-            
-            ana = analogRead(6);
-            printf(" AD6: %d ", ana);
-            
-            t = millis();
-            while((millis() - t) < 200)
-                ;
-        }
-        
-        for (i = 8; i > 0; i--)
-        {
-            oneLedOn(i);
-            t1ou('B');
-            
-            ana = analogRead(6);
-            printf(" AD6: %d ", ana);
-            
-            t = millis();
-            while((millis() - t) < 200)
-                ;
+            Tick = 0;
+            t1ou('F');
         }
     }
 }

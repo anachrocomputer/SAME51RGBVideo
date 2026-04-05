@@ -5,32 +5,37 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <string.h>
 
+#define MAXX (256)
+#define MAXY (240)
 
 volatile uint32_t FieldCounter = 0UL;
 volatile bool Tick = false;
-
+uint8_t FrameBuffer[MAXY * MAXX];
 
 /* TC3_Handler --- ISR for 50Hz frame timer interrupt */
 
-void TC3_Handler(void)
+void __attribute__((optimize("O3"))) TC3_Handler(void)
 {
-    int line;
-    int i;
-    
     // Acknowledge interrupt
     TC3_REGS->COUNT16.TC_INTFLAG |= TC_INTFLAG_MC0(1);
+    
+    volatile int line;
+    volatile int i;
+    uint8_t *p = FrameBuffer;
+    volatile uint8_t *port = (volatile uint8_t *)&(PORT_REGS->GROUP[0].PORT_OUT);
     
     FieldCounter++;
     Tick = true;
     
-    PORT_REGS->GROUP[0].PORT_OUTSET = PORT_PA00;    // Frame sync HIGH
+    PORT_REGS->GROUP[1].PORT_OUTSET = PORT_PB04;    // Frame sync HIGH
     
-    for (line = 0; line < 290; line++)
+    for (line = 0; line < 30; line++)
     {
-        PORT_REGS->GROUP[0].PORT_OUTCLR = PORT_PA01;    // Line sync LOW
+        PORT_REGS->GROUP[1].PORT_OUTCLR = PORT_PB05;    // Line sync LOW
         
-        for (i = 0; i < 23; i++)
+        for (i = 0; i < 24; i++)
         {
             __asm("nop");
             __asm("nop");
@@ -38,20 +43,72 @@ void TC3_Handler(void)
             __asm("nop");
         }
         
-        PORT_REGS->GROUP[0].PORT_OUTSET = PORT_PA01;    // Line sync HIGH
+        PORT_REGS->GROUP[1].PORT_OUTSET = PORT_PB05;    // Line sync HIGH
         
-        for (i = 0; i < 293; i++)
+        // Blank scanline
+        for (i = 0; i < 375; i++)
         {
             __asm("nop");
-            __asm("nop");
-            __asm("nop");
-            __asm("nop");
         }
-        
-        __asm("nop");
     }
     
-    PORT_REGS->GROUP[0].PORT_OUTCLR = PORT_PA00;    // Frame sync LOW
+    for (line = 0; line < MAXY; line++)
+    {
+        PORT_REGS->GROUP[1].PORT_OUTCLR = PORT_PB05;    // Line sync LOW
+        
+        for (i = 0; i < 24; i++)
+        {
+            __asm("nop");
+            __asm("nop");
+            __asm("nop");
+            __asm("nop");
+        }
+        
+        PORT_REGS->GROUP[1].PORT_OUTSET = PORT_PB05;    // Line sync HIGH
+        
+        // Back porch
+        for (i = 0; i < 64; i++)
+        {
+            __asm("nop");
+        }
+        
+        // Active scanline
+        for (i = 0; i < MAXX; i++)
+        {
+            *port = *p++;
+        }
+        
+        // Front porch
+        *port = 0u;
+        
+        for (i = 0; i < 64; i++)
+        {
+            __asm("nop");
+        }
+    }
+    
+    for (line = 0; line < 30; line++)
+    {
+        PORT_REGS->GROUP[1].PORT_OUTCLR = PORT_PB05;    // Line sync LOW
+        
+        for (i = 0; i < 24; i++)
+        {
+            __asm("nop");
+            __asm("nop");
+            __asm("nop");
+            __asm("nop");
+        }
+        
+        PORT_REGS->GROUP[1].PORT_OUTSET = PORT_PB05;    // Line sync HIGH
+        
+        // Blank scanline
+        for (i = 0; i < 375; i++)
+        {
+            __asm("nop");
+        }
+    }
+    
+    PORT_REGS->GROUP[1].PORT_OUTCLR = PORT_PB04;    // Frame sync LOW
 }
 
 
@@ -391,31 +448,100 @@ static void initMCU(void)
 
 void main(void)
 {
+    int i;
+    
     initMCU();
     initUARTs();
     //initADC();
     //initDAC();
+    
+    // Cache control: instruction and data caches default to OFF
+    //CMCC_REGS->CMCC_CTRL = ~CMCC_CTRL_CEN(1);
+    //CMCC_REGS->CMCC_CFG |= CMCC_CFG_DCDIS(1) | CMCC_CFG_ICDIS(1);
+    //CMCC_REGS->CMCC_CTRL = CMCC_CTRL_CEN(1);
+    
+    // GPIO pins to outputs
+    PORT_REGS->GROUP[0].PORT_DIRSET = PORT_PA00;    // Pin 1
+    PORT_REGS->GROUP[0].PORT_DIRSET = PORT_PA01;    // Pin 2
+    PORT_REGS->GROUP[0].PORT_DIRSET = PORT_PA02;    // Pin 3
+    PORT_REGS->GROUP[0].PORT_DIRSET = PORT_PA03;    // Pin 4
+    PORT_REGS->GROUP[0].PORT_DIRSET = PORT_PA04;    // Pin 13
+    PORT_REGS->GROUP[0].PORT_DIRSET = PORT_PA05;    // Pin 14
+    PORT_REGS->GROUP[0].PORT_DIRSET = PORT_PA06;    // Pin 15
+    PORT_REGS->GROUP[0].PORT_DIRSET = PORT_PA07;    // Pin 16
+    
+    PORT_REGS->GROUP[1].PORT_DIRSET = PORT_PB04;    // Pin 5, frame sync output
+    PORT_REGS->GROUP[1].PORT_DIRSET = PORT_PB05;    // Pin 6, line sync output
+    
+    PORT_REGS->GROUP[1].PORT_OUTSET = PORT_PB04;    // Frame sync HIGH
+    PORT_REGS->GROUP[1].PORT_OUTSET = PORT_PB05;    // Line sync HIGH
+    
+    memset(FrameBuffer, 0, sizeof(FrameBuffer));
+    
+    // Fill in some scanlines: top line white, next two dotted
+    for (i = 0; i < MAXX; i++)
+    {
+        if (i & 1)
+        {
+            FrameBuffer[i] = 0xff;
+            FrameBuffer[i + MAXX] = 0x00;
+            FrameBuffer[i + (MAXX * 2)] = 0xff;
+        }
+        else
+        {
+            FrameBuffer[i] = 0xff;
+            FrameBuffer[i + MAXX] = 0xff;
+            FrameBuffer[i + (MAXX * 2)] = 0x00;
+        }
+    }
+    
+    t1ou('\r');
+    t1ou('\n');
+    t1ou('R');
+    t1ou('E');
+    t1ou('S');
+    t1ou('E');
+    t1ou('T');
+    
+    if (RSTC_REGS->RSTC_RCAUSE & RSTC_RCAUSE_SYST_Msk)
+    {
+       printf("SYST ");
+    }
+
+    if (RSTC_REGS->RSTC_RCAUSE & RSTC_RCAUSE_WDT_Msk)
+    {
+       printf("WDT ");
+    }
+
+    if (RSTC_REGS->RSTC_RCAUSE & RSTC_RCAUSE_EXT_Msk)
+    {
+       printf("EXT ");
+    }
+
+    if (RSTC_REGS->RSTC_RCAUSE & RSTC_RCAUSE_BODVDD_Msk)
+    {
+       printf("BODVdd ");
+    }
+
+    if (RSTC_REGS->RSTC_RCAUSE & RSTC_RCAUSE_BODCORE_Msk)
+    {
+       printf("BODVcore ");
+    }
+
+    if (RSTC_REGS->RSTC_RCAUSE & RSTC_RCAUSE_POR_Msk)
+    {
+       printf("POR ");
+    }
+    
+    printf("sizeof(FrameBuffer) = %d\n", sizeof (FrameBuffer));
+    
     init50HzTimer();
-    
-    PORT_REGS->GROUP[0].PORT_DIRSET = PORT_PA00;    // GPIO pins to outputs
-    PORT_REGS->GROUP[0].PORT_DIRSET = PORT_PA01;
-    
-    PORT_REGS->GROUP[1].PORT_DIRSET = PORT_PB31;
-    PORT_REGS->GROUP[0].PORT_DIRSET = PORT_PA27;
-    PORT_REGS->GROUP[1].PORT_DIRSET = PORT_PB23;
-    PORT_REGS->GROUP[0].PORT_DIRSET = PORT_PA25;
-    PORT_REGS->GROUP[0].PORT_DIRSET = PORT_PA20;
-    PORT_REGS->GROUP[0].PORT_DIRSET = PORT_PA18;
-    PORT_REGS->GROUP[0].PORT_DIRSET = PORT_PA15;
-    
-    PORT_REGS->GROUP[0].PORT_OUTSET = PORT_PA00;    // Frame sync HIGH
-    PORT_REGS->GROUP[0].PORT_OUTSET = PORT_PA01;    // Line sync HIGH
     
     while (1)
     {
         if (Tick)
         {
-            Tick = 0;
+            Tick = false;
             t1ou('F');
         }
     }

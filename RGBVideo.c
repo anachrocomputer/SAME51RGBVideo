@@ -14,6 +14,7 @@ volatile uint32_t FieldCounter = 0UL;
 volatile bool Tick = false;
 uint8_t FrameBuffer[MAXY * MAXX];
 
+
 /* TC3_Handler --- ISR for 50Hz frame timer interrupt */
 
 void __attribute__((optimize("O3"))) TC3_Handler(void)
@@ -31,9 +32,9 @@ void __attribute__((optimize("O3"))) TC3_Handler(void)
     
     PORT_REGS->GROUP[1].PORT_OUTSET = PORT_PB04;    // Frame sync HIGH
     
-    for (line = 0; line < 30; line++)
+    for (line = 0; line < 28; line++)
     {
-        PORT_REGS->GROUP[1].PORT_OUTCLR = PORT_PB05;    // Line sync LOW
+        PORT_REGS->GROUP[1].PORT_OUTCLR = PORT_PB05 | PORT_PB04;    // Line sync LOW
         
         for (i = 0; i < 24; i++)
         {
@@ -43,10 +44,10 @@ void __attribute__((optimize("O3"))) TC3_Handler(void)
             __asm("nop");
         }
         
-        PORT_REGS->GROUP[1].PORT_OUTSET = PORT_PB05;    // Line sync HIGH
+        PORT_REGS->GROUP[1].PORT_OUTSET = PORT_PB05 | PORT_PB04;    // Line sync HIGH
         
         // Blank scanline
-        for (i = 0; i < 375; i++)
+        for (i = 0; i < 368; i++)
         {
             __asm("nop");
         }
@@ -54,7 +55,7 @@ void __attribute__((optimize("O3"))) TC3_Handler(void)
     
     for (line = 0; line < MAXY; line++)
     {
-        PORT_REGS->GROUP[1].PORT_OUTCLR = PORT_PB05;    // Line sync LOW
+        PORT_REGS->GROUP[1].PORT_OUTCLR = PORT_PB05 | PORT_PB04;    // Line sync LOW
         
         for (i = 0; i < 24; i++)
         {
@@ -64,10 +65,10 @@ void __attribute__((optimize("O3"))) TC3_Handler(void)
             __asm("nop");
         }
         
-        PORT_REGS->GROUP[1].PORT_OUTSET = PORT_PB05;    // Line sync HIGH
+        PORT_REGS->GROUP[1].PORT_OUTSET = PORT_PB05 | PORT_PB04;    // Line sync HIGH
         
         // Back porch
-        for (i = 0; i < 64; i++)
+        for (i = 0; i < 74; i++)
         {
             __asm("nop");
         }
@@ -81,15 +82,15 @@ void __attribute__((optimize("O3"))) TC3_Handler(void)
         // Front porch
         *port = 0u;
         
-        for (i = 0; i < 64; i++)
+        for (i = 0; i < 74; i++)
         {
             __asm("nop");
         }
     }
     
-    for (line = 0; line < 30; line++)
+    for (line = 0; line < 28; line++)
     {
-        PORT_REGS->GROUP[1].PORT_OUTCLR = PORT_PB05;    // Line sync LOW
+        PORT_REGS->GROUP[1].PORT_OUTCLR = PORT_PB05 | PORT_PB04;    // Line sync LOW
         
         for (i = 0; i < 24; i++)
         {
@@ -99,10 +100,10 @@ void __attribute__((optimize("O3"))) TC3_Handler(void)
             __asm("nop");
         }
         
-        PORT_REGS->GROUP[1].PORT_OUTSET = PORT_PB05;    // Line sync HIGH
+        PORT_REGS->GROUP[1].PORT_OUTSET = PORT_PB05 | PORT_PB04;    // Line sync HIGH
         
         // Blank scanline
-        for (i = 0; i < 375; i++)
+        for (i = 0; i < 447; i++)
         {
             __asm("nop");
         }
@@ -446,9 +447,21 @@ static void initMCU(void)
 }
 
 
+void vline(const int x, const int y1, const int y2, const uint8_t colour)
+{
+    int y;
+    
+    for (y = y1; y <= y2; y++)
+    {
+        FrameBuffer[(y * MAXX) + x] = colour;
+    }
+}
+
+
 void main(void)
 {
     int i;
+    int x;
     
     initMCU();
     initUARTs();
@@ -484,15 +497,26 @@ void main(void)
         if (i & 1)
         {
             FrameBuffer[i] = 0xff;
-            FrameBuffer[i + MAXX] = 0x00;
-            FrameBuffer[i + (MAXX * 2)] = 0xff;
+            FrameBuffer[i + (MAXX * (MAXY / 2))] = 0x00;
+            FrameBuffer[i + (MAXX * (MAXY - 1))] = 0xff;
         }
         else
         {
             FrameBuffer[i] = 0xff;
-            FrameBuffer[i + MAXX] = 0xff;
-            FrameBuffer[i + (MAXX * 2)] = 0x00;
+            FrameBuffer[i + (MAXX * (MAXY / 2))] = 0xff;
+            FrameBuffer[i + (MAXX * (MAXY - 1))] = 0x00;
         }
+    }
+    
+    // Draw vertical lines
+    vline(0,        0, MAXY - 1, 0xff);
+    vline(MAXX / 2, 0, MAXY - 1, 0xff);
+    vline(MAXX - 1, 0, MAXY - 1, 0xff);
+    
+    // Draw greyscale bars
+    for (i = 0; i < 64; i++)
+    {
+        vline (i + 130, (MAXY / 2) + 1, 238, i / 8);
     }
     
     t1ou('\r');
@@ -537,12 +561,39 @@ void main(void)
     
     init50HzTimer();
     
+    x = 1;
+    
     while (1)
     {
         if (Tick)
         {
             Tick = false;
-            t1ou('F');
+            
+            if (FieldCounter & 1)
+            {
+                t1ou('O');
+                
+                if (x != (MAXX / 2))
+                {
+                    vline(x, 1, (MAXY / 2) - 1, 0x00);
+                }
+                
+                
+                if (x == (MAXX - 2))
+                {
+                    x = 1;
+                }
+                else
+                {
+                    x++;
+                }
+                
+                vline(x, 1, (MAXY / 2) - 1, 0xff);
+            }
+            else
+            {
+                t1ou('E');
+            }
         }
     }
 }
